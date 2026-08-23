@@ -17,7 +17,7 @@ import re
 import hashlib
 
 # Set page config at the very beginning
-st.set_page_config(page_title="SimpleRAG", page_icon="💬", layout="wide")
+st.set_page_config(page_title="AI-Study-Assistant", page_icon="💬", layout="wide")
 
 # Constants for initiating the interface
 DEFAULT_OLLAMA_URL = 'http://localhost:11434'
@@ -498,7 +498,7 @@ def main():
 
     Note:
         This function is the entry point of the Streamlit application and controls
-        the overall flow and user interaction of the SimpleRAG system.
+        the overall flow and user interaction of the AI-Study-Assistant system.
     """
     # Initialize session state variables
     if 'ollama_url' not in st.session_state:
@@ -527,7 +527,7 @@ def main():
         st.session_state.previous_embedding_model = ''
 
     with st.sidebar:
-        st.title("💬 SimpleRAG")
+        st.title("💬 AI-Study-Assistant")
         st.header("Settings")
         
         with st.expander("🤖 Model Settings", expanded=False):
