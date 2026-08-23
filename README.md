@@ -1,102 +1,151 @@
-# SimpleRAG: Local Ollama-powered RAG App using Streamlit
+# AI Study Assistant 📚
 
-## Overview
+基于 RAG（Retrieval-Augmented Generation，检索增强生成）的智能学习助手。
 
-SimpleRAG is an educational project that demonstrates the implementation of a Retrieval-Augmented Generation (RAG) system using Streamlit and Ollama. It allows users to upload documents, process them, and then engage in a chat interface to ask questions about the content of these documents.
+本项目面向学生学习场景，利用大语言模型与知识库检索技术，实现课程资料上传、知识库构建以及基于个人学习资料的智能问答。
 
-<img width="1488" alt="SimpleRAG_ScreenShot" src="https://github.com/user-attachments/assets/2015c7a8-3c30-401f-95b0-e54182d236ad">
+用户可以上传 PDF、DOCX 等课程资料，系统会自动完成文本解析、文本切分、向量化存储，并结合大语言模型回答与学习内容相关的问题。
+
+---
+
+## ✨ Features
+
+### 📄 学习资料管理
+
+- 支持上传 PDF、DOCX、TXT 等格式文件
+- 自动提取文档内容
+- 对长文档进行文本切分（Chunking）
+- 保存文档摘要信息
 
 
-## Features
+### 🔍 RAG 知识库问答
 
-- Document upload and processing (PDF, DOCX, XLSX, and plain text files)
-- Text chunking and embedding generation
-- Hybrid search combining semantic similarity and keyword matching
-- Interactive chat interface with streaming responses
-- Customizable settings for model selection, processing parameters, and chat behavior
+- 基于 Embedding 模型生成文本向量
+- 使用 ChromaDB 构建本地向量数据库
+- 支持语义检索与关键词检索结合的 Hybrid Search
+- 根据检索到的课程资料生成相关回答
 
-## How It Works
 
-1. **Document Processing:**
-   - Users upload documents through the Streamlit interface.
-   - The app reads and extracts text from various file formats.
-   - Text is split into smaller chunks with optional overlap.
-   - Each chunk is embedded using the selected Ollama model.
-   - Embeddings are stored in a ChromaDB collection for efficient retrieval.
+### 🤖 大语言模型交互
 
-2. **Chat Interface:**
-   - Users input questions about the processed documents.
-   - The app performs a hybrid search to find relevant document chunks:
-     - Semantic search using the embedded vectors
-     - Keyword-based search for additional relevance
-   - Retrieved chunks are combined with the chat history and document summaries.
-   - A prompt is constructed and sent to the Ollama chat model.
-   - The model's response is streamed back to the user interface.
+- 支持本地 Ollama 大语言模型调用
+- 支持流式输出回答
+- 支持多轮对话上下文记忆
 
-3. **Key Components:**
-   - Ollama: Provides both embedding and chat models.
-   - ChromaDB: Vector database for storing and querying embeddings.
-   - Streamlit: Powers the web interface and user interactions.
 
-## Setup and Installation
+### 📚 学习辅助场景（持续开发）
 
-1. Clone the repository:
-   ```
-   git clone https://github.com/NeoVand/SimpleRAG.git
-   cd SimpleRAG
-   ```
+计划增加：
 
-2. Create and activate a virtual environment:
-   ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
-   ```
+- 自动总结章节重点
+- 生成考试复习提纲
+- 根据资料生成练习题
+- 错题分析与知识薄弱点总结
 
-3. Install the required packages:
-   ```
-   pip install -r requirements.txt
-   ```
+---
 
-4. Install and set up Ollama:
-   - Follow the instructions at [Ollama's official website](https://ollama.ai/) to install Ollama on your system.
-   - Pull an embedding model.
-   ```
-   ollama pull paraphrase-multilingual
-   ```
-   - Pull a chat model.
-   ```
-   ollama pull llama3.1
-   ```
+## 工作流程
 
-5. Run the Streamlit app:
-   ```
-   streamlit run app.py
-   ```
+整体工作流程：
 
-6. Open your web browser and navigate to the URL provided by Streamlit (usually `http://localhost:8501`).
+用户上传课程资料
 
-## Usage
+↓
 
-1. In the sidebar, select the embedding and chat models from the available Ollama models.
-2. Adjust processing and chat settings as needed.
-3. Upload documents using the file uploader.
-4. Click "Process Documents" to embed and index the uploaded files.
-5. Once processing is complete, use the chat interface to ask questions about the documents.
-6. View relevant document chunks by expanding the "View Relevant Document Chunks" section below each response.
+文档解析
+(PDF/DOCX/TXT)
 
-## Customization
+↓
 
-- Modify the `DEFAULT_PROMPT_TEMPLATE` in the code to change how the chat model interprets the context and generates responses.
-- Adjust the hybrid search algorithm in the `hybrid_search` function to fine-tune retrieval performance.
-- Experiment with different Ollama models for embedding and chat to optimize for your specific use case.
+文本切分
+(Text Chunking)
 
-## Limitations and Considerations
+↓
 
-- The app's performance depends on the quality and capabilities of the Ollama models used.
-- Large documents or a high number of uploads may require significant processing time and memory.
-- The hybrid search method is a simple implementation and may not be optimal for all types of queries or documents.
+Embedding向量生成
 
-## Contributing
+↓
 
-This project is for educational purposes. Feel free to fork, modify, and experiment with the code to learn more about RAG systems and Streamlit development.
+ChromaDB存储
 
+↓
+
+用户输入问题
+
+↓
+
+Hybrid Search检索相关知识
+
+↓
+
+LLM生成回答
+
+---
+
+## 核心组成部分
+
+### Ollama
+
+提供本地大语言模型能力，包括：
+
+- Embedding 模型
+- Chat 模型
+
+
+### ChromaDB
+
+用于存储和查询文本向量，实现知识库检索。
+
+
+### Streamlit
+
+用于构建用户交互界面，实现：
+
+- 文件上传
+- 参数配置
+- 对话展示
+
+---
+
+# 🛠️ 技术栈
+
+## Programming Language
+
+- Python
+
+
+## AI / LLM
+
+- RAG
+- Embedding
+- Ollama
+
+
+## Framework
+
+- Streamlit
+
+
+## Vector Database
+
+- ChromaDB
+
+
+## Document Processing
+
+- PyPDF2
+- python-docx
+- openpyxl
+
+
+---
+
+# 📚 Future Plans
+
+后续计划：
+
+- [ ] 学习总结模式
+- [ ] 自动生成考试重点
+- [ ] 自动生成练习题
+- [ ] 错题知识点分析
+- [ ] 学习进度管理
