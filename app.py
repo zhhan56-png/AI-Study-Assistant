@@ -28,20 +28,33 @@ DEFAULT_TEMPERATURE = 0.1  # the degree of model creativity (less = more strict)
 DEFAULT_MEMORY_SIZE = 3  # the number of recent Q&A pairs to keep in memory and add to the chat context
 
 # Default prompt template for the chat model.
-DEFAULT_PROMPT_TEMPLATE = """Here are the chunks retrieved based on similarity search from user's question. They might or might not be directly related to the question:
+DEFAULT_PROMPT_TEMPLATE = """你是一名面向大学生的智能学习助手。
+
+请根据以下课程资料、文档摘要和聊天记录回答用户的问题。
+
+【相关资料】
 {context}
 
-Document Summaries:
+【文档摘要】
 {summaries}
 
-Chat History:
+【聊天记录】
 {memory}
 
-User Question: {question}
+【用户问题】
+{question}
 
-Please provide a comprehensive answer to the user's question based on the given context, document summaries, and chat history. If the information is not available in the provided context, please state that you don't have enough information to answer the question.
+回答要求：
+1. 优先依据提供的资料回答，不要随意补充资料中没有的信息。
+2. 如果资料中没有足够信息，请明确说明“当前资料中没有足够信息回答这个问题”。
+3. 默认使用自然、简洁、清晰的中文回答。
+4. 不要输出“根据上下文”“根据提供的资料”等机械化开场。
+5. 如果问题适合分步骤说明，请使用清晰的步骤或要点。
+6. 尽量保留资料中的专业术语，但对难懂内容进行简要解释。
+7. 不要输出你的推理过程，只给出最终答案。
 
-Your Answer:"""
+回答：
+"""
 
 # Ollama API functions
 
