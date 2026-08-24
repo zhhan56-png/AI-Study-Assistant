@@ -119,12 +119,12 @@ def embed_documents(ollama_url: str, model: str, texts: List[str]) -> Union[List
     for text in texts:
         try:
             response = requests.post(
-                f'{ollama_url}/api/embeddings',
-                json={'model': model, 'prompt': text},
+                f'{ollama_url}/api/embed',
+                json={'model': model, 'input': text},
                 timeout=30
             )
             response.raise_for_status()
-            embedding = response.json()['embedding']
+            embedding = response.json()['embeddings'][0]
             embeddings.append(embedding)
         except requests.RequestException as e:
             st.sidebar.error(f"Error getting embedding: {str(e)}")
@@ -587,7 +587,7 @@ def main():
         # Clear chat button in sidebar
         if st.button("🧹 Clear Chat", key="clear_chat"):
             st.session_state.messages = []
-            st.experimental_rerun()
+            st.rerun()
 
         if process_button and uploaded_files:
             with st.spinner("Processing documents..."):
