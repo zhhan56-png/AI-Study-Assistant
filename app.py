@@ -27,35 +27,70 @@ DEFAULT_NUM_CHUNKS = 4  # the number of chunks that are added to the chat contex
 DEFAULT_TEMPERATURE = 0.1  # the degree of model creativity (less = more strict)
 DEFAULT_MEMORY_SIZE = 3  # the number of recent Q&A pairs to keep in memory and add to the chat context
 
-# Default prompt template for the chat model.
-DEFAULT_PROMPT_TEMPLATE = """你是一名面向大学生的智能学习助手。
+QA_PROMPT_TEMPLATE = """
+你是一名大学智能学习助手。
 
-请根据以下课程资料、文档摘要和聊天记录回答用户的问题。
+请根据资料回答用户问题。
 
-【相关资料】
+资料:
 {context}
 
-【文档摘要】
+摘要:
 {summaries}
 
-【聊天记录】
-{memory}
-
-【用户问题】
+问题:
 {question}
 
-回答要求：
-1. 优先依据提供的资料回答，不要随意补充资料中没有的信息。
-2. 如果资料中没有足够信息，请明确说明“当前资料中没有足够信息回答这个问题”。
-3. 默认使用自然、简洁、清晰的中文回答。
-4. 不要输出“根据上下文”“根据提供的资料”等机械化开场。
-5. 如果问题适合分步骤说明，请使用清晰的步骤或要点。
-6. 尽量保留资料中的专业术语，但对难懂内容进行简要解释。
-7. 不要输出你的推理过程，只给出最终答案。
+要求：
+1. 使用中文回答
+2. 不要编造资料之外的信息
+3. 回答清晰简洁
 
 回答：
 """
 
+
+SUMMARY_PROMPT_TEMPLATE = """
+你是一名学习助手。
+
+请根据以下课程资料生成学习总结。
+
+资料:
+{context}
+
+要求：
+输出：
+
+1. 核心知识点
+2. 重要概念解释
+3. 学习重点
+4. 可能需要掌握的内容
+
+使用中文回答。
+
+总结：
+"""
+
+
+EXAM_PROMPT_TEMPLATE = """
+你是一名考试辅导助手。
+
+请根据课程资料生成考试复习内容。
+
+资料:
+{context}
+
+请整理：
+
+1. 必考知识点
+2. 高频考点
+3. 易错点
+4. 可能出现的题型
+
+使用中文回答。
+
+复习提纲：
+"""
 # Ollama API functions
 
 @st.cache_data(show_spinner=False)
@@ -592,7 +627,7 @@ def main():
 
         with st.expander("💬 Chat Settings", expanded=False):
             memory_size = st.number_input("Number of messages to keep in memory", min_value=1, max_value=10, value=DEFAULT_MEMORY_SIZE, key="memory_size_input")
-            prompt_template = st.text_area("Prompt template", value=DEFAULT_PROMPT_TEMPLATE, key="prompt_template_input")
+            study_mode = st.selectbox("study mode",["智能问答","内容总结","考试复习"],key="study_mode")
 
         uploaded_files = st.file_uploader("Choose files", accept_multiple_files=True, key="file_uploader")
         process_button = st.button("🔄 Process Documents", key="process_button")
@@ -723,7 +758,14 @@ def main():
                         context = "\n\n".join([doc[0] for doc in results])
                         summaries_text = "\n\n".join([f"{file}: {summary}" for file, summary in st.session_state.summaries.items()])
                         chat_history = get_chat_history(st.session_state.messages, memory_size)
-                        full_prompt = prompt_template.format(context=context, summaries=summaries_text, memory=chat_history, question=prompt)
+                        if study_mode == "智能问答":
+                         template = QA_PROMPT_TEMPLATE
+                        elif study_mode == "内容总结":
+                         template = SUMMARY_PROMPT_TEMPLATE
+                        else:
+                         template = EXAM_PROMPT_TEMPLATE
+                         
+                        full_prompt = template.format(context=context, summaries=summaries_text, memory=chat_history, question=prompt)
                         
                         # Generate response using the chat model
                         response = chat_with_documents(st.session_state.ollama_url, st.session_state.chat_model, full_prompt, temperature)
