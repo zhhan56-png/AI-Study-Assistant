@@ -8,7 +8,7 @@
 
 <!-- 请将 xxx.png 替换为 image 文件夹中图片的实际文件名，例如 demo.png -->
 
-![AI Study Assistant 项目界面]<img src="./images/images.png" width="800">
+![AI Study Assistant 项目界面]<img src="./images/1.png" width="800">
 
 
 ## ✨ 功能特性
