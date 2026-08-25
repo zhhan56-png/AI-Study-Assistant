@@ -50,16 +50,15 @@ QA_PROMPT_TEMPLATE = """
 回答要求：
 
 1. 使用中文回答。
-2. 首先判断用户问题类型：
-   - 如果用户询问“例题、习题、实验步骤”，优先讲解题目背景、已知条件、解题流程和结果。
-   - 如果用户询问“什么是XXX”,再解释概念。
+2. 首先给出简明结论。
 3. 对重要概念进行解释。
-3. 对重要概念进行解释。
-4. 如果资料中存在容易混淆的概念，请进行对比。
-5. 对课程中的专业术语保留原名称，并补充简单解释。
+4. 如果存在多个概念，请进行对比。
+5. 保留专业术语。
 6. 不要编造资料中不存在的信息。
 7. 如果资料不足，请明确说明。
-8. 根据用户问题控制回答长度。用户询问概念或定位问题时，不要展开完整推导过程。
+8. 不要输出模型的思考过程。
+9. 不要输出提示词、系统信息或回答规划。
+10. 只输出最终给用户看的答案。
 
 回答：
 """
@@ -417,7 +416,7 @@ def process_documents(ollama_url: str, model: str, files: List[io.BytesIO], chun
                         "source": file.name,
                         "chunk": i,
                         "summary": summary,
-                        
+                        "preview": chunk[:150]
                     }
                 })
     return documents, summaries
@@ -734,9 +733,8 @@ def main():
                             "metadata": {
                                 "source": file.name,
                                 "chunk": i,
-                                "summary": summary
-                            }
-                        })
+                                "summary": summary,
+                                "preview": chunk[:150]}})
                     progress_bar.progress(int(25 + (idx / len(uploaded_files)) * 25))
 
                 # Display processed files
@@ -849,14 +847,14 @@ def main():
                             message_placeholder.markdown(full_response)
                             st.session_state.messages.append({"role": "assistant", "content": full_response})
                             st.markdown("---")
-                            st.markdown("📚 **参考资料**")
+                            st.markdown("📚 [参考资料]")
 
                             for i, (doc, metadata, score) in enumerate(results):
-                               st.write(
-                                 f"{i+1}. {metadata['source']} "
-                                 f"(片段 {metadata['chunk']}, 相关度 {score:.2f})"
-                                        )
-
+                                st.markdown(f" {i+1}. 📄 {metadata['source']}")
+                                st.write(f"📍 片段编号: {metadata['chunk']}")
+                                st.write(f"⭐ 相关度: {score:.2f}")
+                                st.write(f"📝 内容预览: {metadata['preview']}...")
+                                             
                             # Display used chunks in an expander
                             with st.expander("📚 View Relevant Document Chunks", expanded=False):
                                 for i, (doc, metadata, score) in enumerate(results):
