@@ -50,13 +50,16 @@ QA_PROMPT_TEMPLATE = """
 回答要求：
 
 1. 使用中文回答。
-2. 首先给出简明结论。
+2. 首先判断用户问题类型：
+   - 如果用户询问“例题、习题、实验步骤”，优先讲解题目背景、已知条件、解题流程和结果。
+   - 如果用户询问“什么是XXX”,再解释概念。
 3. 对重要概念进行解释。
-4. 如果存在多个概念，请进行对比。
+3. 对重要概念进行解释。
+4. 如果资料中存在容易混淆的概念，请进行对比。
 5. 对课程中的专业术语保留原名称，并补充简单解释。
 6. 不要编造资料中不存在的信息。
 7. 如果资料不足，请明确说明。
-
+8. 根据用户问题控制回答长度。用户询问概念或定位问题时，不要展开完整推导过程。
 
 回答：
 """
@@ -413,7 +416,8 @@ def process_documents(ollama_url: str, model: str, files: List[io.BytesIO], chun
                     "metadata": {
                         "source": file.name,
                         "chunk": i,
-                        "summary": summary
+                        "summary": summary,
+                        
                     }
                 })
     return documents, summaries
@@ -526,11 +530,22 @@ def hybrid_search(query: str, collection, documents: List[Dict[str, Union[str, D
     sorted_docs = sorted(combined_scores.items(), key=lambda item: item[1], reverse=True)
 
     # Retrieve the top documents
-    top_docs = []
-    for doc_id, score in sorted_docs[:num_chunks]:
+    similarity_threshold = 0.3
+    filtered_docs = [
+        item for item in sorted_docs
+        if item[1] >= similarity_threshold
+    ]
+    if not filtered_docs:
+        filtered_docs = sorted_docs[:1]
+
+    top_docs = [] 
+
+    for doc_id, score in filtered_docs[:num_chunks]:
         index = int(doc_id)
         doc = documents[index]
         top_docs.append((doc['content'], doc['metadata'], score))
+        if len(top_docs) >= num_chunks:
+            break
 
     return top_docs
 
@@ -833,6 +848,14 @@ def main():
                                         continue
                             message_placeholder.markdown(full_response)
                             st.session_state.messages.append({"role": "assistant", "content": full_response})
+                            st.markdown("---")
+                            st.markdown("📚 **参考资料**")
+
+                            for i, (doc, metadata, score) in enumerate(results):
+                               st.write(
+                                 f"{i+1}. {metadata['source']} "
+                                 f"(片段 {metadata['chunk']}, 相关度 {score:.2f})"
+                                        )
 
                             # Display used chunks in an expander
                             with st.expander("📚 View Relevant Document Chunks", expanded=False):
@@ -850,5 +873,4 @@ def main():
     else:
         st.info("💡 Please select an embedding and chat model and then upload and process documents to start chatting.")
 
-if __name__ == "__main__":
-    main()
+main()
