@@ -16,6 +16,8 @@ from collections import Counter
 import re
 import hashlib
 
+from rag_bm25 import build_bm25_index, tokenize
+
 # Set page config at the very beginning
 st.set_page_config(page_title="AI-Study-Assistant", page_icon="💬", layout="wide")
 
@@ -444,26 +446,28 @@ def get_chat_history(messages: List[Dict[str, str]], memory_size: int) -> str:
 
 def keyword_search(query: str, documents: List[Dict[str, Union[str, Dict[str, Union[str, int]]]]]) -> Dict[str, float]:
     """
-    Perform a simple keyword-based search over the documents.
+    Perform a BM25 keyword search over the documents.
 
-    This function calculates a relevance score for each document based on
-    the overlap between query words and document words.
+    BUG-01 fix: the old implementation split the query on whitespace
+    (``query.lower().split()``), which reduces a Chinese question to a single
+    token and makes every keyword score 0. We now tokenize with jieba (Chinese)
+    plus a word regex (English/numbers) and score with Okapi BM25.
 
     Args:
         query (str): The search query.
         documents (List[Dict]): The list of document dictionaries.
 
     Returns:
-        Dict[str, float]: A dictionary mapping document IDs to their relevance scores.
+        Dict[str, float]: A dictionary mapping document IDs to their BM25 scores.
     """
-    query_words = set(query.lower().split())
-    scores = {}
-    for i, doc in enumerate(documents):
-        doc_words = set(doc['content'].lower().split())
-        score = len(query_words.intersection(doc_words)) / len(query_words) if len(query_words) > 0 else 0
-        doc_id = str(i)  # Assuming IDs are strings of their index
-        scores[doc_id] = score
-    return scores
+    index = st.session_state.get('bm25_index')
+    if index is None or getattr(index, 'n_docs', -1) != len(documents):
+        # 兜底：会话里没有索引时现建一份（例如热重载/旧会话）。
+        index = build_bm25_index(documents)
+        st.session_state.bm25_index = index
+
+    scores = index.score(tokenize(query))
+    return {str(i): score for i, score in enumerate(scores)}
 
 def hybrid_search(query: str, collection, documents: List[Dict[str, Union[str, Dict[str, Union[str, int]]]]], num_chunks: int):
     """
@@ -635,6 +639,9 @@ def main():
         st.session_state.chat_model = ''
     if 'previous_embedding_model' not in st.session_state:
         st.session_state.previous_embedding_model = ''
+    # BUG-01 修复：BM25 关键词索引（文档处理后构建，查询时复用）
+    if 'bm25_index' not in st.session_state:
+        st.session_state.bm25_index = None
 
     with st.sidebar:
         st.title("💬 AI-Study-Assistant")
@@ -672,6 +679,7 @@ def main():
                     st.session_state.documents = []
                     st.session_state.summaries = {}
                     st.session_state.processed_file_hashes = {}
+                    st.session_state.bm25_index = None
                     st.warning("Embedding model changed. Please reprocess your documents.")
 
                 chat_models = st.session_state.models
@@ -736,6 +744,10 @@ def main():
                                 "summary": summary,
                                 "preview": chunk[:150]}})
                     progress_bar.progress(int(25 + (idx / len(uploaded_files)) * 25))
+
+                # BUG-01 修复：预构建 BM25 索引（中文需 jieba 分词，
+                # 原来的空格切词会让中文查询得分为 0）
+                st.session_state.bm25_index = build_bm25_index(documents)
 
                 # Display processed files
                 st.subheader("Processed Files:")

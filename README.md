@@ -7,7 +7,7 @@
 > **当前状态（v1.0 原型，修复中）**
 > 主流程已跑通，但代码审计确认存在多项影响检索质量与稳定性的缺陷（2 个 P0、多个 P1）。
 > 本仓库暂不作为“已完成/可展示”的完整项目；修复计划见 [docs/DEBUG-REPORT.md](docs/DEBUG-REPORT.md) 与下方 [Roadmap](#-roadmap)，逐条修复进度见 [#21 缺陷修复总览看板](https://github.com/zhhan56-png/AI-Study-Assistant/issues/21)。
-> 当前已知最严重的两个问题：**中文关键词检索实际失效（Hybrid 退化为纯向量）**、**向量库为内存模式（刷新即丢）**。
+> 当前已知最严重的问题：**向量库为内存模式（刷新即丢，BUG-02）**；中文关键词检索失效（BUG-01）已在 v1.1 中修复（jieba 分词 + BM25）。
 
 ![AI Study Assistant 界面](images/1.png)
 
@@ -19,7 +19,7 @@
 | 文本切分（chunk_size / overlap） | ⚠️ 有缺陷 | 参数组合可触发死循环，见 BUG-04 |
 | 文档摘要 | ⚠️ 有缺陷 | 整篇文本一次性塞入模型，长文档会被截断，见 BUG-06 |
 | Embedding + ChromaDB 存储 | ⚠️ 有缺陷 | 使用内存实例，重启/刷新后知识库丢失，见 BUG-02 |
-| 混合检索（语义 + 关键词） | ⚠️ 有缺陷 | 中文关键词检索失效，实际为纯向量检索，见 BUG-01 |
+| 混合检索（语义 + 关键词） | ✅ 关键词侧已修复 | v1.1 起关键词侧为 jieba 分词 + BM25（BUG-01 已修复）；融合逻辑仍有缺陷，见 BUG-03 |
 | 相关度阈值过滤 | ⚠️ 有缺陷 | 归一化分数不可解释，实际常只剩 1 条结果，见 BUG-03 |
 | 智能问答 / 内容总结 / 考试复习 | ⚠️ 部分可用 | 总结与复习模式仍按问题做 top-k 检索，见 BUG-05 |
 | 流式输出 + 多轮对话 | ✅ 基本可用 | 记忆窗口存在 off-by-one，见 BUG-13 |
@@ -39,7 +39,7 @@ flowchart LR
     subgraph QA[检索增强问答]
         B1[用户问题] --> B2[问题向量化]
         B2 --> B3[Chroma 全量相似度查询]
-        B4[keyword_search<br/>空格分词<br/>中文失效 BUG-01] --> B5[Min-Max 归一化<br/>均值融合]
+        B4[jieba 分词 + BM25<br/>中文关键词检索] --> B5[Min-Max 归一化<br/>均值融合]
         B3 --> B5
         B5 --> B6[阈值过滤 0.3<br/>BUG-03]
         B6 --> B7[Prompt 模板<br/>问答 / 总结 / 复习]
@@ -125,7 +125,7 @@ streamlit run app.py
 
 | ID | 严重度 | 问题 | 影响 |
 | --- | --- | --- | --- |
-| BUG-01 | P0 | 中文关键词检索失效（`keyword_search` 用 `split()` 空格分词） | Hybrid 检索退化为纯向量检索 |
+| BUG-01 | P0 ✅ 已修复 | 中文关键词检索失效（`keyword_search` 用 `split()` 空格分词） | 曾使 Hybrid 检索退化为纯向量检索；v1.1 已改为 jieba + BM25 |
 | BUG-02 | P0 | ChromaDB 使用内存实例 `chromadb.Client()` | 刷新/重启后知识库丢失；分批上传无法累积 |
 | BUG-03 | P1 | Min-Max 归一化 + 固定 0.3 阈值 | 结果数不稳定（中文场景常只剩 1 条），展示“相关度”不可解释 |
 | BUG-04 | P1 | `chunk_text` 未校验 overlap < chunk_size | 特定参数（如 chunk=100、overlap=500）导致死循环卡死 |
@@ -140,7 +140,7 @@ streamlit run app.py
 | BUG-13 | P2 | 记忆窗口把当前问题算进历史 | 记忆错位、少一轮上下文 |
 | BUG-14 | P3 | 用 `/api/generate` + 单条 Prompt 而非 `/api/chat` | 无角色结构，历史拼接易失配 |
 | BUG-15 | P3 | 死代码与未使用导入 | `process_documents()` 从未调用；`streamlit_chat`/`pathlib`/`Counter` 未使用 |
-| BUG-16 | P3 | 工程化缺失 | 无测试 / CI / 日志；依赖锁定旧版 Streamlit；README 曾有多处错误 |
+| BUG-16 | P3 | 工程化缺失 | 无 CI / 日志；测试仅覆盖 BM25（v1.1 起）；依赖锁定旧版 Streamlit；README 曾有多处错误 |
 
 ## 🔧 错误排查 / FAQ
 
@@ -158,7 +158,7 @@ streamlit run app.py
 
 ### v1.1 修复版（当前计划）
 
-- [ ] BUG-01：jieba 分词 + BM25，替换现有 `keyword_search`
+- [x] BUG-01：jieba 分词 + BM25，替换现有 `keyword_search`（v1.1 已修复，`rag_bm25.py` + `tests/test_rag_bm25.py`）
 - [ ] BUG-02：改用 `chromadb.PersistentClient`，支持分批上传累积
 - [ ] BUG-03：改为 RRF 融合 + 真实余弦相似度阈值，展示可解释分数
 - [ ] BUG-04：参数校验（overlap 必须小于 chunk_size），UI 联动约束
@@ -178,11 +178,17 @@ streamlit run app.py
 
 ```text
 AI-Study-Assistant/
-├── app.py               # 全部逻辑（单文件，v1 原型）
+├── app.py               # Streamlit 界面与主流程（单文件，v1 原型）
+├── rag_bm25.py          # BUG-01 修复：jieba 分词 + BM25 关键词检索
 ├── requirements.txt     # 运行依赖
+├── requirements-dev.txt # 开发/测试依赖（pytest）
 ├── README.md            # 本文件
 ├── docs/
 │   └── DEBUG-REPORT.md  # 错误排查与修复计划
+├── tests/
+│   └── test_rag_bm25.py # BM25/分词单元测试
+├── scripts/
+│   └── probe_keyword_search.py  # BUG-01 前后对比探针
 ├── images/
 │   └── 1.png            # 界面截图
 └── .streamlit/
@@ -198,6 +204,7 @@ AI-Study-Assistant/
 ## 🤝 开发说明
 
 - 本项目为个人学习项目，2026 年 8 月发布 v1.0，目前处于问题修复与工程化重构阶段。
+- 本地运行测试：`pip install -r requirements-dev.txt && python -m pytest tests -q`；BUG-01 前后对比：`python scripts/probe_keyword_search.py`。
 - 提交规范：`fix:` / `docs:` / `refactor:` / `test:` 前缀；每个缺陷一个 issue 或一次提交，便于追溯。
 - 问题跟踪：GitHub Issues（[#21 缺陷修复总览看板](https://github.com/zhhan56-png/AI-Study-Assistant/issues/21)，BUG-01 ~ BUG-20 已逐条建 issue）；缺陷详细分析与验收标准见 [docs/DEBUG-REPORT.md](docs/DEBUG-REPORT.md)。
 
