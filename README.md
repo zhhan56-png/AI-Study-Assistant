@@ -6,7 +6,7 @@
 
 > **当前状态（v1.0 原型，修复中）**
 > 主流程已跑通，但代码审计确认存在多项影响检索质量与稳定性的缺陷（2 个 P0、多个 P1）。
-> 本仓库暂不作为“已完成/可展示”的完整项目；修复计划见 [docs/DEBUG-REPORT.md](docs/DEBUG-REPORT.md) 与下方 [Roadmap](#-roadmap)。
+> 本仓库暂不作为“已完成/可展示”的完整项目；修复计划见 [docs/DEBUG-REPORT.md](docs/DEBUG-REPORT.md) 与下方 [Roadmap](#-roadmap)，逐条修复进度见 [#21 缺陷修复总览看板](https://github.com/zhhan56-png/AI-Study-Assistant/issues/21)。
 > 当前已知最严重的两个问题：**中文关键词检索实际失效（Hybrid 退化为纯向量）**、**向量库为内存模式（刷新即丢）**。
 
 ![AI Study Assistant 界面](images/1.png)
@@ -199,7 +199,7 @@ AI-Study-Assistant/
 
 - 本项目为个人学习项目，2026 年 8 月发布 v1.0，目前处于问题修复与工程化重构阶段。
 - 提交规范：`fix:` / `docs:` / `refactor:` / `test:` 前缀；每个缺陷一个 issue 或一次提交，便于追溯。
-- 问题跟踪：见 [docs/DEBUG-REPORT.md](docs/DEBUG-REPORT.md) 中的缺陷编号（BUG-xx）与状态表。
+- 问题跟踪：GitHub Issues（[#21 缺陷修复总览看板](https://github.com/zhhan56-png/AI-Study-Assistant/issues/21)，BUG-01 ~ BUG-20 已逐条建 issue）；缺陷详细分析与验收标准见 [docs/DEBUG-REPORT.md](docs/DEBUG-REPORT.md)。
 
 ## 📄 License
 
