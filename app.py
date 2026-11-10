@@ -3,7 +3,6 @@ from streamlit_chat import message
 import os
 import time
 from pathlib import Path
-import chromadb
 import requests
 import json
 import PyPDF2
@@ -17,6 +16,16 @@ import re
 import hashlib
 
 from rag_bm25 import build_bm25_index, tokenize
+from rag_store import (
+    DEFAULT_CHROMA_DIR,
+    chunk_id,
+    clear_collection,
+    delete_file_chunks,
+    get_chroma_client,
+    get_or_create_collection,
+    load_documents,
+    upsert_documents,
+)
 
 # Set page config at the very beginning
 st.set_page_config(page_title="AI-Study-Assistant", page_icon="💬", layout="wide")
@@ -467,7 +476,10 @@ def keyword_search(query: str, documents: List[Dict[str, Union[str, Dict[str, Un
         st.session_state.bm25_index = index
 
     scores = index.score(tokenize(query))
-    return {str(i): score for i, score in enumerate(scores)}
+    # BUG-02: 使用稳定的 chunk id（而不是文档列表下标）作为 key，
+    # 这样从持久化存储重新加载后融合层仍然能对上号。
+    ids = [doc.get("id", str(i)) for i, doc in enumerate(documents)]
+    return {doc_id: score for doc_id, score in zip(ids, scores)}
 
 def hybrid_search(query: str, collection, documents: List[Dict[str, Union[str, Dict[str, Union[str, int]]]]], num_chunks: int):
     """
@@ -508,6 +520,9 @@ def hybrid_search(query: str, collection, documents: List[Dict[str, Union[str, D
     # Perform keyword search and get scores
     keyword_scores = keyword_search(query, documents)
 
+    # BUG-02: 结果来自持久化存储，doc_id 是稳定字符串，需要映射回文档列表下标
+    doc_id_to_index = {doc.get("id", str(i)): i for i, doc in enumerate(documents)}
+
     # Normalize both sets of scores
     semantic_values = list(semantic_similarities.values())
     keyword_values = list(keyword_scores.values())
@@ -544,7 +559,9 @@ def hybrid_search(query: str, collection, documents: List[Dict[str, Union[str, D
     top_docs = [] 
 
     for doc_id, score in filtered_docs[:num_chunks]:
-        index = int(doc_id)
+        index = doc_id_to_index.get(doc_id)
+        if index is None:
+            continue
         doc = documents[index]
         top_docs.append((doc['content'], doc['metadata'], score))
         if len(top_docs) >= num_chunks:
@@ -552,30 +569,34 @@ def hybrid_search(query: str, collection, documents: List[Dict[str, Union[str, D
 
     return top_docs
 
-def sanitize_collection_name(name: str) -> str:
+@st.cache_resource(show_spinner=False)
+def get_vector_store(embedding_model: str):
+    """Open (or create) the persistent ChromaDB collection for a model.
+
+    BUG-02 fix: ``chromadb.PersistentClient`` keeps the index under
+    ``data/chroma`` (git-ignored), so refreshing or restarting the app no
+    longer wipes the knowledge base.
     """
-    Sanitize the collection name to meet ChromaDB's requirements.
+    client = get_chroma_client()
+    return get_or_create_collection(client, embedding_model)
 
-    This function ensures that the collection name only contains valid characters,
-    starts and ends with an alphanumeric character, and is within the allowed length.
 
-    Args:
-        name (str): The original collection name.
+def sync_knowledge_base_state(collection) -> None:
+    """Reload the knowledge base from the persistent collection into session state."""
+    documents = load_documents(collection)
+    st.session_state.collection = collection
+    st.session_state.documents = documents
 
-    Returns:
-        str: The sanitized collection name.
-    """
-    # Remove any character that isn't alphanumeric, underscore, or hyphen
-    sanitized = re.sub(r'[^\w-]', '_', name)
-    # Ensure it starts and ends with an alphanumeric character
-    sanitized = re.sub(r'^[^a-zA-Z0-9]+', '', sanitized)
-    sanitized = re.sub(r'[^a-zA-Z0-9]+$', '', sanitized)
-    # Limit to 63 characters
-    sanitized = sanitized[:63]
-    # Ensure it's at least 3 characters long
-    while len(sanitized) < 3:
-        sanitized += '_'
-    return sanitized
+    summaries = {}
+    for doc in documents:
+        source = doc["metadata"].get("source")
+        if source and source not in summaries:
+            summaries[source] = doc["metadata"].get("summary", "")
+    st.session_state.summaries = summaries
+    st.session_state.bm25_index = build_bm25_index(documents) if documents else None
+    st.session_state.data_processed = bool(documents)
+    st.session_state.kb_loaded = True
+
 
 def get_file_hash(file):
     """
@@ -642,6 +663,9 @@ def main():
     # BUG-01 修复：BM25 关键词索引（文档处理后构建，查询时复用）
     if 'bm25_index' not in st.session_state:
         st.session_state.bm25_index = None
+    # BUG-02 修复：是否已从持久化向量库恢复过知识库
+    if 'kb_loaded' not in st.session_state:
+        st.session_state.kb_loaded = False
 
     with st.sidebar:
         st.title("💬 AI-Study-Assistant")
@@ -680,7 +704,15 @@ def main():
                     st.session_state.summaries = {}
                     st.session_state.processed_file_hashes = {}
                     st.session_state.bm25_index = None
+                    st.session_state.kb_loaded = False
                     st.warning("Embedding model changed. Please reprocess your documents.")
+
+                # BUG-02 修复：首次运行/切换模型后，从磁盘恢复该模型的知识库
+                if st.session_state.embedding_model and not st.session_state.kb_loaded:
+                    try:
+                        sync_knowledge_base_state(get_vector_store(st.session_state.embedding_model))
+                    except Exception as exc:  # pragma: no cover - 环境相关错误
+                        st.sidebar.error(f"知识库加载失败: {exc}")
 
                 chat_models = st.session_state.models
                 selected_chat_model = st.selectbox("Select the chat model", chat_models, key="chat_model_select")
@@ -694,6 +726,21 @@ def main():
             chunk_size = st.number_input("Chunk size", min_value=100, max_value=2000, value=DEFAULT_CHUNK_SIZE, key="chunk_size_input")
             chunk_overlap = st.number_input("Chunk overlap", min_value=0, max_value=500, value=DEFAULT_CHUNK_OVERLAP, key="chunk_overlap_input")
             num_chunks = st.number_input("Number of chunks to retrieve", min_value=1, max_value=10, value=DEFAULT_NUM_CHUNKS, key="num_chunks_input")
+
+            # BUG-02 修复：展示持久化知识库状态，并提供清空入口
+            if st.session_state.get('data_processed'):
+                st.caption(f"📦 已索引 {len(st.session_state.documents)} 个片段 · 持久化于 {DEFAULT_CHROMA_DIR}")
+            if st.button("🗑️ Clear Knowledge Base", key="clear_kb"):
+                if not st.session_state.embedding_model:
+                    st.warning("请先选择 embedding 模型。")
+                else:
+                    client = get_chroma_client()
+                    collection = clear_collection(client, st.session_state.embedding_model)
+                    get_vector_store.clear()
+                    sync_knowledge_base_state(collection)
+                    st.session_state.processed_file_hashes = {}
+                    st.success("知识库已清空。")
+                    st.rerun()
 
         with st.expander("💬 Chat Settings", expanded=False):
             memory_size = st.number_input("Number of messages to keep in memory", min_value=1, max_value=10, value=DEFAULT_MEMORY_SIZE, key="memory_size_input")
@@ -717,10 +764,10 @@ def main():
 
                 # Process uploaded documents
                 status_text.text("Reading and chunking documents...")
-                documents = []
-                summaries = {}
+                new_documents = []
+                uploaded_hashes = {}
                 for idx, file in enumerate(uploaded_files):
-                    file_hash = get_file_hash(file)#去重缓存，无需二次处理
+                    file_hash = get_file_hash(file)  # 去重缓存，无需二次处理
                     if file_hash in st.session_state.processed_file_hashes:
                         # Use cached content
                         content = st.session_state.processed_file_hashes[file_hash]['content']
@@ -733,74 +780,53 @@ def main():
                             st.session_state.processed_file_hashes[file_hash] = {'content': content, 'summary': summary}
                         else:
                             summary = ""
-                    summaries[file.name] = summary
-                    chunks = chunk_text(content, chunk_size, chunk_overlap)
+                    chunks = chunk_text(content, chunk_size, chunk_overlap) if content else []
+                    if chunks:
+                        uploaded_hashes[file.name] = file_hash
                     for i, chunk in enumerate(chunks):
-                        documents.append({
+                        new_documents.append({
+                            "id": chunk_id(file_hash, i),
                             "content": chunk,
                             "metadata": {
                                 "source": file.name,
                                 "chunk": i,
                                 "summary": summary,
-                                "preview": chunk[:150]}})
+                                "preview": chunk[:150],
+                                "file_hash": file_hash}})
                     progress_bar.progress(int(25 + (idx / len(uploaded_files)) * 25))
-
-                # BUG-01 修复：预构建 BM25 索引（中文需 jieba 分词，
-                # 原来的空格切词会让中文查询得分为 0）
-                st.session_state.bm25_index = build_bm25_index(documents)
 
                 # Display processed files
                 st.subheader("Processed Files:")
                 for file in uploaded_files:
                     st.write(file.name)
-                
+
                 # Embed documents
                 status_text.text("Generating embeddings...")
-                embeddings = embed_documents(st.session_state.ollama_url, st.session_state.embedding_model, [doc["content"] for doc in documents])
+                embeddings = embed_documents(
+                    st.session_state.ollama_url,
+                    st.session_state.embedding_model,
+                    [doc["content"] for doc in new_documents])
                 progress_bar.progress(75)
-                
+
                 if embeddings:
-                    # Initialize ChromaDB for vector storage
-                    status_text.text("Initializing vector database...")
-                    chroma_client = chromadb.Client()
-                    progress_bar.progress(85)
-                    
-                    # Create a new collection with a sanitized name based on the embedding model
-                    base_name = f"document_collection_{st.session_state.embedding_model}"
-                    collection_name = sanitize_collection_name(base_name)
-                    
-                    # Delete existing collection if it exists
-                    try:
-                        existing_collection = chroma_client.get_collection(name=collection_name)
-                        if existing_collection:
-                            chroma_client.delete_collection(name=collection_name)
-                            st.warning(f"Deleted existing collection: {collection_name}")
-                    except ValueError:
-                        # Collection doesn't exist, so we can proceed
-                        pass
-                    
-                    # Create a new collection
-                    collection = chroma_client.create_collection(name=collection_name)
-                    
-                    # Add documents to ChromaDB
-                    status_text.text("Indexing documents...")
-                    collection.add(
-                        embeddings=embeddings,
-                        documents=[doc["content"] for doc in documents],
-                        metadatas=[doc["metadata"] for doc in documents],
-                        ids=[str(i) for i in range(len(documents))]
-                    )
+                    # BUG-02 修复：写入持久化 ChromaDB；同一文件按哈希先删后写，
+                    # 重复上传/分批上传都不会产生重复片段。
+                    status_text.text("Writing to persistent vector store...")
+                    collection = get_vector_store(st.session_state.embedding_model)
+                    for file_hash in uploaded_hashes.values():
+                        delete_file_chunks(collection, file_hash)
+                    upsert_documents(collection, new_documents, embeddings)
+
+                    # 从存储读回全部片段（含历史批次），重建 BM25 索引与界面状态
+                    sync_knowledge_base_state(collection)
                     progress_bar.progress(100)
-                    
+
                     end_time = time.time()
                     processing_time = end_time - start_time
-                    status_text.text(f"Processing complete in {processing_time:.2f} seconds.")
-                    
-                    # Store processed data in session state
-                    st.session_state.collection = collection
-                    st.session_state.documents = documents
-                    st.session_state.summaries = summaries
-                    st.session_state.data_processed = True
+                    status_text.text(
+                        f"Processing complete in {processing_time:.2f} seconds. "
+                        f"Knowledge base now has {len(st.session_state.documents)} chunks."
+                    )
                 else:
                     status_text.text("Failed to embed documents.")
                     st.error("Failed to embed documents.")

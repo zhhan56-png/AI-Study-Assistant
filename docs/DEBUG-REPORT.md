@@ -10,12 +10,12 @@
 | 审计对象 | `main` @ `165b2c8`（`app.py` 874 行） |
 | 审计环境 | Windows 10/11 · Python 3.11.15（conda `ai-study`）· Streamlit 1.38.0 · ChromaDB 0.5.5 · Ollama 0.33.2 |
 | 审计方法 | 代码走查 + 本地运行时探针 + 依赖核对 + 文档一致性检查 |
-| 结论 | 主流程可跑通；存在 **2 个 P0、6 个 P1** 及若干 P2/P3 缺陷，建议按 Roadmap 修复后再对外展示 |
+| 结论 | 主流程可跑通；审计时存在 **2 个 P0、6 个 P1** 及若干 P2/P3 缺陷（v1.1 已修复 2 个 P0），建议按 Roadmap 修复后再对外展示 |
 
 ## 1. 结论摘要
 
 1. **检索质量（P0）**：所谓 Hybrid Search 对中文实际退化为纯向量检索（BUG-01）；归一化 + 固定阈值会让检索结果数不稳定、通常只剩 1 条（BUG-03）。这两点直接决定问答质量，是“经不起追问”的根源。
-2. **数据持久性（P0）**：向量库使用内存实例（BUG-02），刷新页面或重启应用后知识库全部丢失；且每次“Process Documents”都会删除重建集合，分批上传无法累积。
+2. **数据持久性（P0）**：向量库使用内存实例（BUG-02），刷新页面或重启应用后知识库全部丢失；且每次“Process Documents”都会删除重建集合，分批上传无法累积。（v1.1 已修复：改用 `PersistentClient`，见 §3）
 3. **健壮性（P1）**：chunk 参数组合可触发死循环（BUG-04）；总结/复习模式答非所问（BUG-05）；长文档摘要被截断（BUG-06）；metadata 冗余（BUG-07）。
 4. **工程化（P2/P3）**：无测试、无 CI、无日志；生成请求无超时；模型下拉框不区分类型；存在死代码与未使用依赖。
 
@@ -24,7 +24,7 @@
 | ID | 等级 | 位置（`app.py`） | 问题 | 状态 |
 | --- | --- | --- | --- | --- |
 | BUG-01 | P0 | 445–466 | 中文关键词检索失效（空格分词） | **Fixed（v1.1）** |
-| BUG-02 | P0 | 753 | ChromaDB 内存模式，知识库不持久 | Open |
+| BUG-02 | P0 | 753 | ChromaDB 内存模式，知识库不持久 | **Fixed（v1.1）** |
 | BUG-03 | P1 | 507–538 | Min-Max 归一化 + 固定 0.3 阈值，分数不可解释 | Open |
 | BUG-04 | P1 | 320–342、686–687 | chunk 参数未校验，可死循环卡死 | Open |
 | BUG-05 | P1 | 822–829 | 总结/复习模式仍按问题检索 top-k | Open |
@@ -77,6 +77,10 @@
 - **影响**：与“个人课程知识库”的产品定位直接冲突；每次使用都要重跑解析 + 摘要 + 向量化，耗时且烧算力。
 - **修复建议**：改用 `chromadb.PersistentClient(path="data/chroma")`（路径加入 `.gitignore`）；以文件哈希/文档 ID 为单位增量写入，避免整库重建；提供“清空知识库”按钮。
 - **验收标准**：Process 后重启应用，知识库仍在；同会话分批上传两次，两份资料都能被检索到。
+
+> **修复记录（v1.1）**：已修复。新增 `rag_store.py`：改用 `chromadb.PersistentClient`（默认 `data/chroma`，`data/` 已 gitignore）；chunk id 采用 `<文件 MD5>-<四位序号>` 的稳定形式；写入按文件哈希先删后写（增量、可累积、可替换），并提供 `Clear Knowledge Base` 按钮。`app.py` 启动时从集合恢复 `documents` / `summaries` / BM25 索引；换 embedding 模型时使用按模型区分的独立集合。
+> 证据：`tests/test_rag_store.py`（9 项全部通过）；`scripts/probe_chroma_persistence.py`：旧 `chromadb.Client()` 为 `is_persistent=False` 且无 `persist_directory`；新 `PersistentClient` 为 `is_persistent=True`，写入 2 条后重新打开仍为 2 条，`chroma.sqlite3` 正常落盘。真实 768 维 embedding 端到端验证：写入 3 条 → 重启重开仍 3 条。
+> 说明：metadata 仍按 chunk 重复存摘要（BUG-07）、跨会话文件去重仍依赖 session 缓存（BUG-20），沿用原有设计，留待后续 issue。
 
 ### BUG-03（P1）归一化分数 + 固定 0.3 阈值，结果数不稳定且不可解释
 
@@ -191,7 +195,7 @@
 
 ## 4. 检索质量实测记录
 
-> 探针脚本未提交到仓库（在本地以临时脚本运行），数据采集环境同上。以下数值来自 2026-11-07 的本地运行，并在 2026-11-08 审计时与代码逻辑复核一致。
+> 探针脚本已入库：BUG-01 见 `scripts/probe_keyword_search.py`，BUG-02 见 `scripts/probe_chroma_persistence.py`。以下数值来自 2026-11-07 的本地运行，并在 2026-11-08 审计时与代码逻辑复核一致。
 
 测试数据：中文文档片段（含“快速排序”相关表述），Embedding 模型 `paraphrase-multilingual`。
 
@@ -201,7 +205,8 @@
 | 归一化后语义分（4 片段用例） | `[1.0, 0.2955, 0.1136, 0.0]` |
 | 融合分（均值） | `[0.5, 0.1477, 0.0568, 0.0]` |
 | `>= 0.3` 过滤后 | 仅 1 条（期望 `num_chunks=4`） |
-| `chromadb.Client()` 持久化 | `is_persistent = False` |
+| `chromadb.Client()` 持久化（修复前） | `is_persistent = False`，无 `persist_directory` |
+| `PersistentClient` 持久化（修复后，`data/chroma`） | `is_persistent = True`；写入 2 条后重启重开仍为 2 条 |
 | chunk_size=100 / overlap=500 | 步长 -400，死循环 |
 
 ## 5. 运行期报错排查流程
@@ -217,7 +222,7 @@
    ```
 3. **确认模型用途**：对话模型 ≠ Embedding 模型；选错会 400（BUG-09）。
 4. **确认参数**：`chunk_overlap < chunk_size`，否则卡死（BUG-04）。
-5. **确认知识库状态**：刷新后丢失是已知缺陷（BUG-02），需要重新处理。
+5. **确认知识库状态**：知识库已持久化在 `data/chroma`（BUG-02 已修复，v1.1）；若侧栏未显示片段数，检查是否已选 embedding 模型，或点 `🗑️ Clear Knowledge Base` 后重新处理。
 6. **提交问题**：附上终端日志、Ollama 版本、复现步骤与使用的模型名，并标注对应 BUG 编号。
 
 ## 6. 修复路线与验收
@@ -234,3 +239,4 @@
 | --- | --- | --- |
 | 2026-11-08 | v1.0 | 首次审计：重写 README，新增本报告，记录 BUG-01 ~ BUG-20 |
 | 2026-11-08 | v1.1 | 修复 BUG-01：新增 `rag_bm25.py`（jieba + BM25）、`tests/test_rag_bm25.py`（10 项通过）、`scripts/probe_keyword_search.py` 对比探针；融合层留给 BUG-03 |
+| 2026-11-10 | v1.1 | 修复 BUG-02：新增 `rag_store.py`（PersistentClient + 稳定 chunk id + 增量写入 + 清空入口），`app.py` 启动时恢复知识库；`tests/test_rag_store.py`（9 项通过）、`scripts/probe_chroma_persistence.py` |

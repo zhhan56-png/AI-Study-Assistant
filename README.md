@@ -4,10 +4,10 @@
 
 将个人课程资料（PDF / DOCX / XLSX / TXT）构建为本地知识库，围绕资料内容进行问答、总结与复习；使用 Ollama 在本地运行 LLM 与 Embedding 模型，回答附带检索来源。
 
-> **当前状态（v1.0 原型，修复中）**
-> 主流程已跑通，但代码审计确认存在多项影响检索质量与稳定性的缺陷（2 个 P0、多个 P1）。
+> **当前状态（v1.1 修复中）**
+> 主流程已跑通，v1.1 正在逐条修复代码审计发现的缺陷（详见 issue 看板）：2 个 P0 中 **BUG-01（中文关键词检索）与 BUG-02（知识库持久化）已修复**，剩余 P1 见 [docs/DEBUG-REPORT.md](docs/DEBUG-REPORT.md)。
 > 本仓库暂不作为“已完成/可展示”的完整项目；修复计划见 [docs/DEBUG-REPORT.md](docs/DEBUG-REPORT.md) 与下方 [Roadmap](#-roadmap)，逐条修复进度见 [#21 缺陷修复总览看板](https://github.com/zhhan56-png/AI-Study-Assistant/issues/21)。
-> 当前已知最严重的问题：**向量库为内存模式（刷新即丢，BUG-02）**；中文关键词检索失效（BUG-01）已在 v1.1 中修复（jieba 分词 + BM25）。
+> 当前影响检索质量的主要问题：**融合层归一化 + 固定 0.3 阈值（BUG-03）**与 **chunk 参数可触发死循环（BUG-04）**。
 
 ![AI Study Assistant 界面](images/1.png)
 
@@ -18,7 +18,7 @@
 | PDF / DOCX / XLSX / TXT 解析 | ✅ 基本可用 | 扫描版 PDF、图片/公式/复杂表格无法提取，见 [已知限制](#-已知限制) |
 | 文本切分（chunk_size / overlap） | ⚠️ 有缺陷 | 参数组合可触发死循环，见 BUG-04 |
 | 文档摘要 | ⚠️ 有缺陷 | 整篇文本一次性塞入模型，长文档会被截断，见 BUG-06 |
-| Embedding + ChromaDB 存储 | ⚠️ 有缺陷 | 使用内存实例，重启/刷新后知识库丢失，见 BUG-02 |
+| Embedding + ChromaDB 存储 | ✅ 可用 | v1.1 起持久化到 `data/chroma`，重启后知识库保留，支持分批累积（BUG-02 已修复） |
 | 混合检索（语义 + 关键词） | ✅ 关键词侧已修复 | v1.1 起关键词侧为 jieba 分词 + BM25（BUG-01 已修复）；融合逻辑仍有缺陷，见 BUG-03 |
 | 相关度阈值过滤 | ⚠️ 有缺陷 | 归一化分数不可解释，实际常只剩 1 条结果，见 BUG-03 |
 | 智能问答 / 内容总结 / 考试复习 | ⚠️ 部分可用 | 总结与复习模式仍按问题做 top-k 检索，见 BUG-05 |
@@ -33,7 +33,7 @@ flowchart LR
         A1[上传课程资料<br/>PDF / DOCX / XLSX / TXT] --> A2[文本提取 read_file]
         A2 --> A3[chunk_text 切分]
         A3 --> A4[逐条 /api/embed 向量化]
-        A4 --> A5[(ChromaDB<br/>内存实例)]
+        A4 --> A5[(ChromaDB 持久化<br/>data/chroma)]
     end
 
     subgraph QA[检索增强问答]
@@ -67,7 +67,7 @@ flowchart LR
 | Python | CPython | 3.11.15（conda env `ai-study`） |
 | Web 界面 | Streamlit | 1.38.0 |
 | LLM / Embedding | Ollama 本地服务 | 0.33.2（`llama3.1`、`paraphrase-multilingual`） |
-| 向量数据库 | ChromaDB | 0.5.5（`chromadb.Client()` 内存模式） |
+| 向量数据库 | ChromaDB | 0.5.5（`PersistentClient`，数据目录 `data/chroma`） |
 | 文档处理 | PyPDF2 / python-docx / openpyxl | 3.0.1 / 1.1.2 / 3.1.5 |
 
 ## 🚀 快速开始
@@ -126,7 +126,7 @@ streamlit run app.py
 | ID | 严重度 | 问题 | 影响 |
 | --- | --- | --- | --- |
 | BUG-01 | P0 ✅ 已修复 | 中文关键词检索失效（`keyword_search` 用 `split()` 空格分词） | 曾使 Hybrid 检索退化为纯向量检索；v1.1 已改为 jieba + BM25 |
-| BUG-02 | P0 | ChromaDB 使用内存实例 `chromadb.Client()` | 刷新/重启后知识库丢失；分批上传无法累积 |
+| BUG-02 | P0 ✅ 已修复 | ChromaDB 曾用内存实例 `chromadb.Client()` | 曾导致刷新/重启后知识库丢失；v1.1 已改为 `PersistentClient`（`data/chroma`），支持分批累积 |
 | BUG-03 | P1 | Min-Max 归一化 + 固定 0.3 阈值 | 结果数不稳定（中文场景常只剩 1 条），展示“相关度”不可解释 |
 | BUG-04 | P1 | `chunk_text` 未校验 overlap < chunk_size | 特定参数（如 chunk=100、overlap=500）导致死循环卡死 |
 | BUG-05 | P1 | 总结/复习模式仍按用户问题检索 top-k | “总结整篇内容”类问题答非所问 |
@@ -149,7 +149,7 @@ streamlit run app.py
 | 400 报错 | 把对话模型选成了 Embedding 模型（界面无法区分）；或 Ollama 版本过旧不支持 `/api/embed` | 重新选择真正的 Embedding 模型；`ollama list` 确认模型；必要时升级 Ollama |
 | 500 报错 | 模型未下载完成、显存/内存不足、模型崩溃 | 查看运行 `streamlit run` 的终端日志；`ollama ps` 观察模型状态；换更小模型重试 |
 | 连接 Ollama 失败 | 未启动 `ollama serve`，或 URL 写错 | 启动 Ollama；核对侧边栏 `Ollama Server URL` |
-| 刷新后知识库消失 | 当前使用内存向量库（BUG-02） | 重新上传处理；v1.1 将改为持久化 |
+| 刷新后知识库消失 | v1.1 起知识库持久化到 `data/chroma`（BUG-02 已修复） | 正常情况下不会消失；若检索为空，先看侧栏“已索引 N 个片段”，必要时点 `🗑️ Clear Knowledge Base` 后重新处理 |
 | 处理文档时页面卡死 | chunk_size / overlap 参数组合触发死循环（BUG-04） | 调大 chunk_size 或调小 overlap；v1.1 将加参数校验 |
 | 显示 “Failed to generate summary.” | 摘要请求失败（模型/服务问题） | 检查 Ollama 日志；确认对话模型可用 |
 | 回答不准确、引用不相关 | 检索质量缺陷（BUG-01 / 03 / 05） | 参见 [docs/DEBUG-REPORT.md](docs/DEBUG-REPORT.md) 的修复计划 |
@@ -159,7 +159,7 @@ streamlit run app.py
 ### v1.1 修复版（当前计划）
 
 - [x] BUG-01：jieba 分词 + BM25，替换现有 `keyword_search`（v1.1 已修复，`rag_bm25.py` + `tests/test_rag_bm25.py`）
-- [ ] BUG-02：改用 `chromadb.PersistentClient`，支持分批上传累积
+- [x] BUG-02：改用 `chromadb.PersistentClient`，支持分批上传累积（v1.1 已修复，`rag_store.py` + `tests/test_rag_store.py`）
 - [ ] BUG-03：改为 RRF 融合 + 真实余弦相似度阈值，展示可解释分数
 - [ ] BUG-04：参数校验（overlap 必须小于 chunk_size），UI 联动约束
 - [ ] BUG-05/06：总结模式改为全文 map-reduce，长文档分块摘要
@@ -180,15 +180,19 @@ streamlit run app.py
 AI-Study-Assistant/
 ├── app.py               # Streamlit 界面与主流程（单文件，v1 原型）
 ├── rag_bm25.py          # BUG-01 修复：jieba 分词 + BM25 关键词检索
+├── rag_store.py         # BUG-02 修复：ChromaDB 持久化 + 稳定 chunk id + 增量写入
+├── data/chroma/         # 本地向量库（运行后生成，已 gitignore）
 ├── requirements.txt     # 运行依赖
 ├── requirements-dev.txt # 开发/测试依赖（pytest）
 ├── README.md            # 本文件
 ├── docs/
 │   └── DEBUG-REPORT.md  # 错误排查与修复计划
 ├── tests/
-│   └── test_rag_bm25.py # BM25/分词单元测试
+│   ├── test_rag_bm25.py # BM25/分词单元测试
+│   └── test_rag_store.py # 向量库持久化/增量写入单元测试
 ├── scripts/
-│   └── probe_keyword_search.py  # BUG-01 前后对比探针
+│   ├── probe_keyword_search.py   # BUG-01 前后对比探针
+│   └── probe_chroma_persistence.py # BUG-02 持久化探针
 ├── images/
 │   └── 1.png            # 界面截图
 └── .streamlit/
@@ -204,7 +208,7 @@ AI-Study-Assistant/
 ## 🤝 开发说明
 
 - 本项目为个人学习项目，2026 年 8 月发布 v1.0，目前处于问题修复与工程化重构阶段。
-- 本地运行测试：`pip install -r requirements-dev.txt && python -m pytest tests -q`；BUG-01 前后对比：`python scripts/probe_keyword_search.py`。
+- 本地运行测试：`pip install -r requirements-dev.txt && python -m pytest tests -q`；BUG-01 前后对比：`python scripts/probe_keyword_search.py`；BUG-02 持久化验证：`python scripts/probe_chroma_persistence.py`。
 - 提交规范：`fix:` / `docs:` / `refactor:` / `test:` 前缀；每个缺陷一个 issue 或一次提交，便于追溯。
 - 问题跟踪：GitHub Issues（[#21 缺陷修复总览看板](https://github.com/zhhan56-png/AI-Study-Assistant/issues/21)，BUG-01 ~ BUG-20 已逐条建 issue）；缺陷详细分析与验收标准见 [docs/DEBUG-REPORT.md](docs/DEBUG-REPORT.md)。
 
